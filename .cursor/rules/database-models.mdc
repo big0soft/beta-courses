@@ -1,0 +1,652 @@
+---
+globs: app/Models/**/*.php,database/migrations/**/*.php
+description: Database design and Eloquent model patterns for Mentor LMS
+---
+
+# Database & Model Patterns
+
+## Database Design Principles
+
+### Table Design
+- Use descriptive table names (plural, snake_case)
+- Implement proper primary keys (auto-incrementing integers)
+- Add foreign key constraints for data integrity
+- Use appropriate data types and constraints
+
+```php
+// Good: Well-designed migration
+Schema::create('courses', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('description');
+    $table->decimal('price', 10, 2);
+    $table->string('slug')->unique();
+    $table->enum('status', ['draft', 'published', 'archived'])->default('draft');
+    $table->foreignId('instructor_id')->constrained()->onDelete('cascade');
+    $table->foreignId('category_id')->constrained()->onDelete('set null');
+    $table->json('metadata')->nullable();
+    $table->timestamp('published_at')->nullable();
+    $table->timestamps();
+    
+    // Indexes for performance
+    $table->index(['instructor_id', 'status']);
+    $table->index(['category_id', 'status']);
+    $table->index('published_at');
+});
+```
+
+### Relationships
+- Use proper foreign key relationships
+- Implement cascade deletes appropriately
+- Use pivot tables for many-to-many relationships
+- Add relationship constraints
+
+```php
+// Good: Relationship design
+Schema::create('course_enrollments', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained()->onDelete('cascade');
+    $table->foreignId('course_id')->constrained()->onDelete('cascade');
+    $table->timestamp('enrolled_at');
+    $table->timestamp('completed_at')->nullable();
+    $table->decimal('amount_paid', 10, 2);
+    $table->timestamps();
+    
+    // Unique constraint to prevent duplicate enrollments
+    $table->unique(['user_id', 'course_id']);
+    $table->index(['user_id', 'enrolled_at']);
+    $table->index(['course_id', 'enrolled_at']);
+});
+```
+
+## Eloquent Model Patterns
+
+### Model Structure
+- Use proper model naming conventions
+- Implement relationships correctly
+- Add accessors and mutators when needed
+- Use scopes for common queries
+
+```php
+// Good: Well-structured model
+class Course extends Model
+{
+    protected $fillable = [
+        'title',
+        'description',
+        'price',
+        'slug',
+        'status',
+        'instructor_id',
+        'category_id',
+        'metadata',
+        'published_at',
+    ];
+
+    protected $casts = [
+        'metadata' => 'array',
+        'published_at' => 'datetime',
+        'price' => 'decimal:2',
+    ];
+
+    // Relationships
+    public function instructor()
+    {
+        return $this->belongsTo(Instructor::class);
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function sections()
+    {
+        return $this->hasMany(CourseSection::class)->orderBy('sort');
+    }
+
+    public function enrollments()
+    {
+        return $this->hasMany(CourseEnrollment::class);
+    }
+
+    // Scopes
+    public function scopePublished($query)
+    {
+        return $query->where('status', CourseStatusType::PUBLISHED);
+    }
+
+    public function scopeByInstructor($query, $instructorId)
+    {
+        return $query->where('instructor_id', $instructorId);
+    }
+
+    // Accessors
+    public function getFormattedPriceAttribute()
+    {
+        return '$' . number_format($this->price, 2);
+    }
+
+    public function getIsPublishedAttribute()
+    {
+        return $this->status === CourseStatusType::PUBLISHED;
+    }
+}
+```
+
+### Relationship Patterns
+- Use proper relationship types
+- Implement eager loading strategies
+- Handle relationship constraints
+- Use relationship methods efficiently
+
+```php
+// Good: Relationship patterns
+class User extends Model
+{
+    public function instructor()
+    {
+        return $this->hasOne(Instructor::class);
+    }
+
+    public function enrollments()
+    {
+        return $this->hasMany(CourseEnrollment::class);
+    }
+
+    public function courses()
+    {
+        return $this->hasManyThrough(Course::class, CourseEnrollment::class);
+    }
+
+    public function isEnrolledIn($courseId)
+    {
+        return $this->enrollments()->where('course_id', $courseId)->exists();
+    }
+}
+
+class Instructor extends Model
+{
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function courses()
+    {
+        return $this->hasMany(Course::class);
+    }
+
+    public function getTotalRevenueAttribute()
+    {
+        return $this->courses()->with('enrollments')->get()
+            ->sum(function ($course) {
+                return $course->enrollments->sum('amount_paid');
+            });
+    }
+}
+```
+
+## Migration Patterns
+
+### Migration Structure
+- Use descriptive migration names
+- Include proper rollback logic
+- Add indexes for performance
+- Use appropriate column types
+
+```php
+// Good: Comprehensive migration
+public function up()
+{
+    Schema::create('course_sections', function (Blueprint $table) {
+        $table->id();
+        $table->foreignId('course_id')->constrained()->onDelete('cascade');
+        $table->string('title');
+        $table->text('description')->nullable();
+        $table->integer('sort')->default(0);
+        $table->boolean('is_published')->default(true);
+        $table->timestamps();
+        
+        $table->index(['course_id', 'sort']);
+        $table->index(['course_id', 'is_published']);
+    });
+}
+
+public function down()
+{
+    Schema::dropIfExists('course_sections');
+}
+```
+
+### Data Migration
+- Use seeders for initial data
+- Implement data transformation logic
+- Handle data validation
+- Use database transactions
+
+```php
+// Good: Data migration
+public function up()
+{
+    Schema::table('courses', function (Blueprint $table) {
+        $table->string('slug')->after('title');
+    });
+
+    // Generate slugs for existing courses
+    Course::chunk(100, function ($courses) {
+        foreach ($courses as $course) {
+            $course->update([
+                'slug' => Str::slug($course->title)
+            ]);
+        }
+    });
+
+    Schema::table('courses', function (Blueprint $table) {
+        $table->unique('slug');
+    });
+}
+```
+
+## Model Scopes
+
+### Query Scopes
+- Create reusable query scopes
+- Use descriptive scope names
+- Implement parameterized scopes
+- Chain scopes effectively
+
+```php
+// Good: Query scopes
+class Course extends Model
+{
+    public function scopePublished($query)
+    {
+        return $query->where('status', CourseStatusType::PUBLISHED);
+    }
+
+    public function scopeByCategory($query, $categoryId)
+    {
+        return $query->where('category_id', $categoryId);
+    }
+
+    public function scopeByPriceRange($query, $min, $max)
+    {
+        return $query->whereBetween('price', [$min, $max]);
+    }
+
+    public function scopeSearch($query, $term)
+    {
+        return $query->where(function ($q) use ($term) {
+            $q->where('title', 'like', "%{$term}%")
+              ->orWhere('description', 'like', "%{$term}%");
+        });
+    }
+
+    public function scopePopular($query)
+    {
+        return $query->withCount('enrollments')
+                    ->orderBy('enrollments_count', 'desc');
+    }
+}
+```
+
+### Global Scopes
+- Use global scopes for model-wide constraints
+- Implement soft deletes when appropriate
+- Handle scope removal when needed
+- Use anonymous global scopes
+
+```php
+// Good: Global scope
+class Course extends Model
+{
+    protected static function booted()
+    {
+        static::addGlobalScope('published', function (Builder $builder) {
+            $builder->where('status', CourseStatusType::PUBLISHED);
+        });
+    }
+
+    public function scopeWithDrafts($query)
+    {
+        return $query->withoutGlobalScope('published');
+    }
+}
+```
+
+## Model Events
+
+### Model Lifecycle
+- Use model events for business logic
+- Implement proper event handling
+- Handle event exceptions
+- Use observers for complex logic
+
+```php
+// Good: Model events
+class Course extends Model
+{
+    protected static function booted()
+    {
+        static::creating(function ($course) {
+            $course->slug = Str::slug($course->title);
+        });
+
+        static::updating(function ($course) {
+            if ($course->isDirty('title')) {
+                $course->slug = Str::slug($course->title);
+            }
+        });
+
+        static::deleting(function ($course) {
+            // Clean up related data
+            $course->sections()->delete();
+            $course->enrollments()->delete();
+        });
+    }
+}
+```
+
+### Observer Pattern
+- Create dedicated observer classes
+- Implement proper event handling
+- Use observers for complex business logic
+- Handle observer exceptions
+
+```php
+// Good: Observer pattern
+class CourseObserver
+{
+    public function creating(Course $course)
+    {
+        $course->slug = Str::slug($course->title);
+    }
+
+    public function updating(Course $course)
+    {
+        if ($course->isDirty('title')) {
+            $course->slug = Str::slug($course->title);
+        }
+    }
+
+    public function deleted(Course $course)
+    {
+        // Clean up related data
+        $course->sections()->delete();
+        $course->enrollments()->delete();
+    }
+}
+```
+
+## Data Validation
+
+### Model Validation
+- Use model validation rules
+- Implement custom validation logic
+- Handle validation errors
+- Use validation attributes
+
+```php
+// Good: Model validation
+class Course extends Model
+{
+    protected $rules = [
+        'title' => 'required|string|max:255',
+        'description' => 'required|string',
+        'price' => 'required|numeric|min:0',
+        'instructor_id' => 'required|exists:instructors,id',
+    ];
+
+    public function validate()
+    {
+        $validator = Validator::make($this->attributes, $this->rules);
+        
+        if ($validator->fails()) {
+            throw new ValidationException($validator);
+        }
+    }
+}
+```
+
+### Database Constraints
+- Use database-level constraints
+- Implement proper foreign keys
+- Use check constraints when appropriate
+- Handle constraint violations
+
+```php
+// Good: Database constraints
+Schema::create('course_lessons', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('section_id')->constrained()->onDelete('cascade');
+    $table->string('title');
+    $table->text('content')->nullable();
+    $table->string('video_url')->nullable();
+    $table->integer('duration')->default(0); // in seconds
+    $table->integer('sort')->default(0);
+    $table->boolean('is_published')->default(true);
+    $table->timestamps();
+    
+    $table->index(['section_id', 'sort']);
+    $table->index(['section_id', 'is_published']);
+    
+    // Check constraint for duration
+    $table->check('duration >= 0');
+});
+```
+
+## Performance Optimization
+
+### Query Optimization
+- Use eager loading to prevent N+1 queries
+- Implement proper indexing
+- Use query caching when appropriate
+- Monitor query performance
+
+```php
+// Good: Query optimization
+class CourseService
+{
+    public function getPopularCourses($limit = 10)
+    {
+        return Course::with(['instructor', 'category', 'sections.lessons'])
+            ->withCount('enrollments')
+            ->published()
+            ->orderBy('enrollments_count', 'desc')
+            ->limit($limit)
+            ->get();
+    }
+
+    public function getCourseWithProgress($courseId, $userId)
+    {
+        return Course::with([
+            'sections.lessons',
+            'enrollments' => function ($query) use ($userId) {
+                $query->where('user_id', $userId);
+            }
+        ])->findOrFail($courseId);
+    }
+}
+```
+
+### Caching Strategies
+- Cache expensive queries
+- Use appropriate cache keys
+- Implement cache invalidation
+- Monitor cache performance
+
+```php
+// Good: Caching implementation
+class CourseService
+{
+    public function getFeaturedCourses()
+    {
+        return Cache::remember('featured_courses', 3600, function () {
+            return Course::with(['instructor', 'category'])
+                ->published()
+                ->where('is_featured', true)
+                ->orderBy('created_at', 'desc')
+                ->limit(6)
+                ->get();
+        });
+    }
+
+    public function clearCourseCache($courseId)
+    {
+        Cache::forget('featured_courses');
+        Cache::forget("course_{$courseId}");
+    }
+}
+```
+
+## Data Seeding
+
+### Seeder Patterns
+- Create realistic seed data
+- Use factories for test data
+- Implement proper data relationships
+- Handle data dependencies
+
+```php
+// Good: Seeder implementation
+class CourseSeeder extends Seeder
+{
+    public function run()
+    {
+        $instructors = Instructor::all();
+        $categories = Category::all();
+
+        Course::factory(50)->create()->each(function ($course) use ($instructors, $categories) {
+            $course->instructor_id = $instructors->random()->id;
+            $course->category_id = $categories->random()->id;
+            $course->save();
+
+            // Create sections and lessons
+            $this->createCourseContent($course);
+        });
+    }
+
+    private function createCourseContent(Course $course)
+    {
+        $sections = CourseSection::factory(3)->create([
+            'course_id' => $course->id
+        ]);
+
+        foreach ($sections as $section) {
+            CourseLesson::factory(5)->create([
+                'section_id' => $section->id
+            ]);
+        }
+    }
+}
+```
+
+### Factory Patterns
+- Create realistic factory data
+- Use proper relationships
+- Implement data variations
+- Handle data constraints
+
+```php
+// Good: Factory implementation
+class CourseFactory extends Factory
+{
+    protected $model = Course::class;
+
+    public function definition()
+    {
+        return [
+            'title' => $this->faker->sentence(4),
+            'description' => $this->faker->paragraphs(3, true),
+            'price' => $this->faker->randomFloat(2, 0, 500),
+            'status' => $this->faker->randomElement(['draft', 'published']),
+            'instructor_id' => Instructor::factory(),
+            'category_id' => Category::factory(),
+            'published_at' => $this->faker->optional(0.7)->dateTimeBetween('-1 year', 'now'),
+        ];
+    }
+
+    public function published()
+    {
+        return $this->state(function (array $attributes) {
+            return [
+                'status' => 'published',
+                'published_at' => $this->faker->dateTimeBetween('-1 year', 'now'),
+            ];
+        });
+    }
+}
+```
+
+## Testing Patterns
+
+### Model Testing
+- Test model relationships
+- Test model scopes
+- Test model events
+- Test model validation
+
+```php
+// Good: Model test
+class CourseTest extends TestCase
+{
+    public function test_course_belongs_to_instructor()
+    {
+        $instructor = Instructor::factory()->create();
+        $course = Course::factory()->create(['instructor_id' => $instructor->id]);
+
+        $this->assertInstanceOf(Instructor::class, $course->instructor);
+        $this->assertEquals($instructor->id, $course->instructor->id);
+    }
+
+    public function test_published_scope()
+    {
+        Course::factory()->create(['status' => 'draft']);
+        Course::factory()->create(['status' => 'published']);
+
+        $publishedCourses = Course::published()->get();
+
+        $this->assertCount(1, $publishedCourses);
+        $this->assertEquals('published', $publishedCourses->first()->status);
+    }
+
+    public function test_slug_generation()
+    {
+        $course = Course::factory()->create(['title' => 'Test Course Title']);
+
+        $this->assertEquals('test-course-title', $course->slug);
+    }
+}
+```
+
+### Database Testing
+- Test database constraints
+- Test data integrity
+- Test migration rollbacks
+- Test seeder data
+
+```php
+// Good: Database test
+class CourseMigrationTest extends TestCase
+{
+    public function test_course_table_has_required_columns()
+    {
+        $this->assertTrue(Schema::hasTable('courses'));
+        $this->assertTrue(Schema::hasColumn('courses', 'title'));
+        $this->assertTrue(Schema::hasColumn('courses', 'description'));
+        $this->assertTrue(Schema::hasColumn('courses', 'price'));
+    }
+
+    public function test_course_foreign_key_constraints()
+    {
+        $instructor = Instructor::factory()->create();
+        $course = Course::factory()->create(['instructor_id' => $instructor->id]);
+
+        $this->assertDatabaseHas('courses', [
+            'id' => $course->id,
+            'instructor_id' => $instructor->id,
+        ]);
+    }
+}
+```

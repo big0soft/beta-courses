@@ -1,0 +1,108 @@
+---
+alwaysApply: true
+description: Mentor LMS project overview and architecture guide
+---
+
+# Mentor LMS - Project Overview
+
+Mentor LMS is a comprehensive Learning Management System built with **Laravel 12** and **React 18** using **Inertia.js** for seamless full-stack integration.
+
+## Architecture Overview
+
+### Backend (Laravel 12)
+- **Framework**: Laravel 12 with PHP 8.2+
+- **Database**: MySQL/PostgreSQL with Eloquent ORM
+- **Authentication**: Laravel Sanctum with multi-role support (Admin, Instructor, Student)
+- **File Storage**: Local storage and AWS S3 support
+- **Payment Gateways**: Stripe, PayPal, Razorpay, Paytm, Mollie
+- **Modules**: Modular architecture with nwidart/laravel-modules
+
+### Frontend (React + TypeScript)
+- **Framework**: React 18 with TypeScript
+- **Routing**: Inertia.js for SPA-like experience
+- **UI Library**: Radix UI + Tailwind CSS + shadcn/ui components
+- **State Management**: React hooks + Inertia.js shared data
+- **Build Tool**: Vite with SSR support
+- **Rich Text**: TipTap editor with advanced features
+
+## Key Directories
+
+### Backend Structure
+- `app/` - Main Laravel application code
+  - `Enums/` - PHP enumerations for type safety
+  - `Http/Controllers/` - API and web controllers
+  - `Http/Middleware/` - Request middleware
+  - `Http/Requests/` - Form validation classes
+  - `Models/` - Eloquent models with relationships
+  - `Services/` - Business logic layer
+  - `Notifications/` - Email and system notifications
+- `Modules/` - Laravel modules (Blog, Installer, PaymentGateways, Updater)
+- `routes/` - Route definitions by user role
+- `database/` - Migrations, seeders, and factories
+
+### Frontend Structure
+- `resources/js/` - React/TypeScript application
+  - `components/` - Reusable UI components
+  - `pages/` - Page components organized by section
+  - `hooks/` - Custom React hooks
+  - `lib/` - Utility functions and helpers
+  - `types/` - TypeScript type definitions
+- `resources/css/` - Global styles and Tailwind configuration
+- `resources/views/` - Laravel Blade templates (minimal usage)
+
+## Core Features
+
+### User Management
+- Multi-role authentication (Admin, Instructor, Student)
+- Google OAuth integration
+- Profile management with avatar uploads
+- Role-based permissions and access control
+
+### Course Management
+- Rich course content (videos, documents, quizzes, assignments)
+- Advanced quiz system with multiple question types
+- Curriculum structure with sections and lessons
+- Drip content scheduling
+- Course requirements and learning outcomes
+
+### Payment & Revenue
+- Multiple payment gateway integrations
+- Commission-based revenue sharing
+- Payout management for instructors
+- Coupon and discount system
+
+### Content Management
+- Blog system with rich text editing
+- Page builder with customizable sections
+- Media library with file management
+- Multi-language support
+
+## Development Patterns
+
+### Service Layer Pattern
+Business logic is organized in service classes under `app/Services/`:
+- `CourseService` - Course management
+- `PaymentService` - Payment processing
+- `UserService` - User management
+- `InstructorService` - Instructor-specific logic
+
+### Component Architecture
+React components follow a structured pattern:
+- `ui/` - Base UI components (shadcn/ui)
+- `cards/` - Content display components
+- `forms/` - Form components
+- `tables/` - Data table components
+
+### State Management
+- Server state: Inertia.js shared data
+- Client state: React hooks and context
+- Form state: Inertia.js useForm hook
+- Global state: React context providers
+
+## Key Files to Understand
+
+- [composer.json](mdc:composer.json) - PHP dependencies and scripts
+- [package.json](mdc:package.json) - Node.js dependencies and build scripts
+- [vite.config.ts](mdc:vite.config.ts) - Frontend build configuration
+- [app.tsx](mdc:resources/js/app.tsx) - Main React application entry point
+- [PROJECT_STRUCTURE.md](mdc:PROJECT_STRUCTURE.md) - Detailed project structure documentation

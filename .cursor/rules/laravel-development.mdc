@@ -1,0 +1,247 @@
+---
+globs: *.php
+description: Laravel development patterns and best practices for Mentor LMS
+---
+
+# Laravel Development Rules
+
+## Code Organization
+
+### Controllers
+- Keep controllers thin - delegate business logic to services
+- Use single responsibility principle
+- Return Inertia responses for frontend integration
+- Use form request classes for validation
+
+```php
+// Good: Thin controller with service delegation
+public function store(CreateCourseRequest $request)
+{
+    $course = $this->courseService->createCourse($request->validated());
+    return redirect()->route('courses.show', $course);
+}
+
+// Bad: Business logic in controller
+public function store(Request $request)
+{
+    // Complex business logic here...
+}
+```
+
+### Services
+- Place all business logic in service classes under `app/Services/`
+- Use dependency injection for service dependencies
+- Follow single responsibility principle
+- Use database transactions for data integrity
+
+```php
+// Good: Service with clear responsibilities
+class CourseService
+{
+    public function __construct(
+        private CourseEnrollmentService $enrollmentService,
+        private PaymentService $paymentService
+    ) {}
+
+    public function createCourse(array $data): Course
+    {
+        return DB::transaction(function () use ($data) {
+            // Course creation logic
+        }, 5);
+    }
+}
+```
+
+### Models
+- Use Eloquent relationships properly
+- Add accessors and mutators when needed
+- Use scopes for common queries
+- Follow naming conventions
+
+```php
+// Good: Model with relationships and scopes
+class Course extends Model
+{
+    public function instructor()
+    {
+        return $this->belongsTo(Instructor::class);
+    }
+
+    public function scopePublished($query)
+    {
+        return $query->where('status', CourseStatusType::PUBLISHED);
+    }
+}
+```
+
+## Request Validation
+
+### Form Requests
+- Create dedicated form request classes for complex validation
+- Use validation rules consistently
+- Add custom error messages when needed
+
+```php
+// Good: Dedicated form request
+class CreateCourseRequest extends FormRequest
+{
+    public function rules()
+    {
+        return [
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'price' => 'required|numeric|min:0',
+        ];
+    }
+}
+```
+
+## Database Patterns
+
+### Migrations
+- Use descriptive migration names
+- Add proper indexes for performance
+- Use foreign key constraints
+- Include rollback logic
+
+```php
+// Good: Comprehensive migration
+Schema::create('courses', function (Blueprint $table) {
+    $table->id();
+    $table->string('title');
+    $table->text('description');
+    $table->decimal('price', 10, 2);
+    $table->foreignId('instructor_id')->constrained()->onDelete('cascade');
+    $table->timestamps();
+    
+    $table->index(['instructor_id', 'status']);
+});
+```
+
+### Seeders
+- Use factories for test data generation
+- Create realistic seed data
+- Use database transactions in seeders
+
+## Authentication & Authorization
+
+### Multi-Role System
+- Use Laravel's built-in authorization
+- Create policies for complex authorization logic
+- Use middleware for route protection
+
+```php
+// Good: Policy-based authorization
+class CoursePolicy
+{
+    public function update(User $user, Course $course)
+    {
+        return $user->id === $course->instructor_id || $user->isAdmin();
+    }
+}
+```
+
+## API Development
+
+### Inertia.js Integration
+- Use Inertia responses for SPA-like experience
+- Share data globally when needed
+- Use proper HTTP status codes
+
+```php
+// Good: Inertia response with shared data
+return Inertia::render('Courses/Index', [
+    'courses' => $courses,
+    'filters' => $filters,
+]);
+```
+
+## Error Handling
+
+### Exception Handling
+- Use try-catch blocks for expected errors
+- Log errors appropriately
+- Return user-friendly error messages
+
+```php
+// Good: Proper error handling
+try {
+    $course = $this->courseService->createCourse($data);
+} catch (ValidationException $e) {
+    return back()->withErrors($e->errors());
+} catch (Exception $e) {
+    Log::error('Course creation failed', ['error' => $e->getMessage()]);
+    return back()->with('error', 'Failed to create course');
+}
+```
+
+## Performance Optimization
+
+### Database Queries
+- Use eager loading to prevent N+1 queries
+- Add database indexes for frequently queried columns
+- Use pagination for large datasets
+
+```php
+// Good: Eager loading
+$courses = Course::with(['instructor', 'sections.lessons'])
+    ->published()
+    ->paginate(10);
+```
+
+### Caching
+- Cache expensive operations
+- Use appropriate cache tags
+- Implement cache invalidation strategies
+
+## Security Best Practices
+
+### Input Validation
+- Always validate user input
+- Use CSRF protection
+- Sanitize data before storage
+
+### File Uploads
+- Validate file types and sizes
+- Store files securely
+- Use proper file naming conventions
+
+## Testing
+
+### Feature Tests
+- Test complete user workflows
+- Use database transactions for test isolation
+- Mock external services
+
+```php
+// Good: Comprehensive feature test
+public function test_user_can_create_course()
+{
+    $user = User::factory()->instructor()->create();
+    
+    $this->actingAs($user)
+        ->post('/courses', [
+            'title' => 'Test Course',
+            'description' => 'Test Description',
+        ])
+        ->assertRedirect()
+        ->assertSessionHas('success');
+        
+    $this->assertDatabaseHas('courses', [
+        'title' => 'Test Course',
+        'instructor_id' => $user->id,
+    ]);
+}
+```
+
+## Code Quality
+
+### PSR Standards
+- Follow PSR-12 coding standards
+- Use Laravel Pint for code formatting
+- Write self-documenting code
+
+### Documentation
+- Add PHPDoc comments for complex methods
+- Document API endpoints
+- Maintain up-to-date README files

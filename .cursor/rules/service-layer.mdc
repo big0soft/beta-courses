@@ -1,0 +1,440 @@
+---
+globs: app/Services/**/*.php
+description: Service layer patterns and business logic organization for Mentor LMS
+---
+
+# Service Layer Patterns
+
+## Service Architecture
+
+### Service Organization
+- Place all business logic in service classes under `app/Services/`
+- Use dependency injection for service dependencies
+- Follow single responsibility principle
+- Implement proper error handling and validation
+
+```php
+// Good: Well-structured service with dependencies
+class CourseService
+{
+    public function __construct(
+        private CourseEnrollmentService $enrollmentService,
+        private PaymentService $paymentService,
+        private MediaService $mediaService
+    ) {}
+
+    public function createCourse(array $data): Course
+    {
+        return DB::transaction(function () use ($data) {
+            $course = Course::create($data);
+            $this->mediaService->handleCourseMedia($course, $data['media'] ?? []);
+            return $course;
+        }, 5);
+    }
+}
+```
+
+### Service Responsibilities
+- **CourseService**: Course creation, updates, publishing logic
+- **PaymentService**: Payment processing, revenue calculations
+- **UserService**: User management, profile updates
+- **InstructorService**: Instructor-specific business logic
+- **StudentService**: Student enrollment, progress tracking
+- **MediaService**: File uploads, storage management
+
+## Business Logic Patterns
+
+### Transaction Management
+- Use database transactions for data integrity
+- Implement proper rollback strategies
+- Handle concurrent access scenarios
+- Use appropriate transaction isolation levels
+
+```php
+// Good: Transaction with proper error handling
+public function processCoursePurchase(array $data): PaymentHistory
+{
+    return DB::transaction(function () use ($data) {
+        $payment = $this->createPayment($data);
+        $this->enrollmentService->enrollStudent($data['user_id'], $data['course_id']);
+        $this->calculateInstructorRevenue($payment);
+        
+        return $payment;
+    }, 5);
+}
+```
+
+### Data Validation
+- Validate business rules in services
+- Use form requests for input validation
+- Implement custom validation rules
+- Handle validation errors gracefully
+
+```php
+// Good: Business rule validation
+public function enrollStudent(int $userId, int $courseId): Enrollment
+{
+    $user = User::findOrFail($userId);
+    $course = Course::findOrFail($courseId);
+    
+    // Business rule validation
+    if ($this->isAlreadyEnrolled($userId, $courseId)) {
+        throw new BusinessException('User is already enrolled in this course');
+    }
+    
+    if (!$course->isPublished()) {
+        throw new BusinessException('Course is not available for enrollment');
+    }
+    
+    return $this->createEnrollment($user, $course);
+}
+```
+
+### Service Composition
+- Compose services for complex operations
+- Use service facades for common operations
+- Implement service interfaces for testability
+- Avoid circular dependencies
+
+```php
+// Good: Service composition pattern
+class CourseManagementService
+{
+    public function __construct(
+        private CourseService $courseService,
+        private CourseSectionService $sectionService,
+        private CourseLessonService $lessonService,
+        private MediaService $mediaService
+    ) {}
+
+    public function createCompleteCourse(array $data): Course
+    {
+        $course = $this->courseService->createCourse($data);
+        $this->sectionService->createSections($course, $data['sections']);
+        $this->lessonService->createLessons($course, $data['lessons']);
+        $this->mediaService->processCourseMedia($course, $data['media']);
+        
+        return $course;
+    }
+}
+```
+
+## Payment & Revenue Services
+
+### Payment Processing
+- Handle multiple payment gateways
+- Implement proper error handling
+- Use payment service abstraction
+- Handle webhook processing
+
+```php
+// Good: Payment service abstraction
+interface PaymentGatewayInterface
+{
+    public function processPayment(array $data): PaymentResult;
+    public function handleWebhook(array $data): bool;
+}
+
+class StripeService implements PaymentGatewayInterface
+{
+    public function processPayment(array $data): PaymentResult
+    {
+        try {
+            $charge = Stripe::charges()->create([
+                'amount' => $data['amount'],
+                'currency' => $data['currency'],
+                'source' => $data['source'],
+            ]);
+            
+            return new PaymentResult($charge);
+        } catch (Exception $e) {
+            throw new PaymentException('Payment processing failed: ' . $e->getMessage());
+        }
+    }
+}
+```
+
+### Revenue Calculation
+- Calculate instructor commissions
+- Handle platform revenue
+- Implement payout logic
+- Track revenue analytics
+
+```php
+// Good: Revenue calculation service
+class RevenueService
+{
+    public function calculateCourseRevenue(Course $course, float $totalAmount): array
+    {
+        $instructorRevenue = $this->getInstructorRevenuePercentage();
+        $platformRevenue = 100 - $instructorRevenue;
+        
+        return [
+            'instructor_amount' => $totalAmount * ($instructorRevenue / 100),
+            'platform_amount' => $totalAmount * ($platformRevenue / 100),
+            'instructor_percentage' => $instructorRevenue,
+            'platform_percentage' => $platformRevenue,
+        ];
+    }
+}
+```
+
+## Course Management Services
+
+### Course Creation
+- Handle course creation workflow
+- Manage course metadata
+- Process course media
+- Implement course validation
+
+```php
+// Good: Course creation service
+class CourseService
+{
+    public function createCourse(array $data, User $instructor): Course
+    {
+        $this->validateCourseData($data);
+        
+        return DB::transaction(function () use ($data, $instructor) {
+            $course = Course::create([
+                'title' => $data['title'],
+                'description' => $data['description'],
+                'instructor_id' => $instructor->id,
+                'status' => CourseStatusType::DRAFT,
+            ]);
+            
+            $this->createCourseSections($course, $data['sections'] ?? []);
+            $this->handleCourseMedia($course, $data['media'] ?? []);
+            
+            return $course;
+        });
+    }
+}
+```
+
+### Course Publishing
+- Implement course approval workflow
+- Handle course status changes
+- Manage course visibility
+- Process course notifications
+
+```php
+// Good: Course publishing logic
+public function publishCourse(Course $course): Course
+{
+    $this->validateCourseForPublishing($course);
+    
+    return DB::transaction(function () use ($course) {
+        $course->update(['status' => CourseStatusType::PUBLISHED]);
+        $this->notifyCoursePublished($course);
+        $this->updateCourseVisibility($course);
+        
+        return $course;
+    });
+}
+```
+
+## User Management Services
+
+### User Registration
+- Handle user registration workflow
+- Process email verification
+- Manage user roles
+- Handle social authentication
+
+```php
+// Good: User registration service
+class UserService
+{
+    public function registerUser(array $data): User
+    {
+        $this->validateRegistrationData($data);
+        
+        return DB::transaction(function () use ($data) {
+            $user = User::create([
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+                'role' => UserType::STUDENT,
+            ]);
+            
+            $this->sendVerificationEmail($user);
+            $this->createUserProfile($user);
+            
+            return $user;
+        });
+    }
+}
+```
+
+### Role Management
+- Handle role transitions
+- Manage permissions
+- Process role-specific workflows
+- Handle role-based access control
+
+```php
+// Good: Role management service
+class RoleService
+{
+    public function promoteToInstructor(User $user): Instructor
+    {
+        $this->validateInstructorPromotion($user);
+        
+        return DB::transaction(function () use ($user) {
+            $instructor = Instructor::create([
+                'user_id' => $user->id,
+                'status' => 'pending_approval',
+            ]);
+            
+            $user->update(['role' => UserType::INSTRUCTOR]);
+            $this->notifyInstructorApplication($instructor);
+            
+            return $instructor;
+        });
+    }
+}
+```
+
+## Media & File Services
+
+### File Upload Handling
+- Process file uploads securely
+- Handle different file types
+- Implement file validation
+- Manage file storage
+
+```php
+// Good: File upload service
+class MediaService
+{
+    public function uploadCourseMedia(Course $course, array $files): array
+    {
+        $uploadedFiles = [];
+        
+        foreach ($files as $file) {
+            $this->validateFile($file);
+            $path = $this->storeFile($file, 'courses/' . $course->id);
+            $uploadedFiles[] = $this->createMediaRecord($course, $file, $path);
+        }
+        
+        return $uploadedFiles;
+    }
+}
+```
+
+### File Management
+- Handle file deletion
+- Manage file permissions
+- Process file conversions
+- Implement file cleanup
+
+## Service Testing
+
+### Unit Testing
+- Test service methods in isolation
+- Mock external dependencies
+- Test business logic thoroughly
+- Use database transactions for test isolation
+
+```php
+// Good: Service test example
+class CourseServiceTest extends TestCase
+{
+    public function test_can_create_course()
+    {
+        $instructor = User::factory()->instructor()->create();
+        $data = [
+            'title' => 'Test Course',
+            'description' => 'Test Description',
+        ];
+        
+        $course = $this->courseService->createCourse($data, $instructor);
+        
+        $this->assertInstanceOf(Course::class, $course);
+        $this->assertEquals('Test Course', $course->title);
+        $this->assertEquals($instructor->id, $course->instructor_id);
+    }
+}
+```
+
+### Integration Testing
+- Test service interactions
+- Test database operations
+- Test external service integrations
+- Test error handling scenarios
+
+## Error Handling
+
+### Service Exceptions
+- Create custom exception classes
+- Implement proper error messages
+- Handle service-specific errors
+- Use appropriate HTTP status codes
+
+```php
+// Good: Custom service exceptions
+class CourseServiceException extends Exception
+{
+    public static function courseNotFound(int $id): self
+    {
+        return new self("Course with ID {$id} not found");
+    }
+    
+    public static function courseNotPublished(Course $course): self
+    {
+        return new self("Course '{$course->title}' is not published");
+    }
+}
+```
+
+### Error Recovery
+- Implement retry mechanisms
+- Handle partial failures
+- Provide fallback strategies
+- Log errors appropriately
+
+## Performance Optimization
+
+### Caching
+- Cache expensive operations
+- Use appropriate cache keys
+- Implement cache invalidation
+- Monitor cache performance
+
+```php
+// Good: Service caching
+class CourseService
+{
+    public function getPopularCourses(int $limit = 10): Collection
+    {
+        return Cache::remember("popular_courses_{$limit}", 3600, function () use ($limit) {
+            return Course::published()
+                ->withCount('enrollments')
+                ->orderBy('enrollments_count', 'desc')
+                ->limit($limit)
+                ->get();
+        });
+    }
+}
+```
+
+### Database Optimization
+- Use eager loading
+- Implement query optimization
+- Monitor query performance
+- Use appropriate indexes
+
+## Service Documentation
+
+### Code Documentation
+- Add PHPDoc comments
+- Document service methods
+- Explain business logic
+- Provide usage examples
+
+### API Documentation
+- Document service interfaces
+- Explain service dependencies
+- Provide integration examples
+- Maintain up-to-date documentation

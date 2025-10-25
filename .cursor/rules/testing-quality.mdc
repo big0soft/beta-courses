@@ -1,0 +1,686 @@
+---
+globs: tests/**/*.php,resources/js/**/*.test.tsx,resources/js/**/*.test.ts
+description: Testing patterns and quality assurance for Mentor LMS
+---
+
+# Testing & Quality Assurance
+
+## Testing Strategy
+
+### Test Pyramid
+- **Unit Tests**: Test individual components and methods in isolation
+- **Integration Tests**: Test component interactions and API endpoints
+- **Feature Tests**: Test complete user workflows and business processes
+- **End-to-End Tests**: Test full application flows
+
+```php
+// Good: Test pyramid structure
+// Unit Test - Service method
+public function test_course_service_creates_course()
+{
+    $data = ['title' => 'Test Course', 'description' => 'Test Description'];
+    $course = $this->courseService->createCourse($data);
+    
+    $this->assertInstanceOf(Course::class, $course);
+    $this->assertEquals('Test Course', $course->title);
+}
+
+// Integration Test - API endpoint
+public function test_course_api_returns_courses()
+{
+    Course::factory()->count(3)->create();
+    
+    $response = $this->getJson('/api/courses');
+    
+    $response->assertStatus(200)
+             ->assertJsonCount(3, 'data');
+}
+
+// Feature Test - Complete workflow
+public function test_user_can_enroll_in_course()
+{
+    $user = User::factory()->create();
+    $course = Course::factory()->published()->create();
+    
+    $this->actingAs($user)
+         ->post("/courses/{$course->id}/enroll")
+         ->assertRedirect()
+         ->assertSessionHas('success');
+         
+    $this->assertDatabaseHas('course_enrollments', [
+        'user_id' => $user->id,
+        'course_id' => $course->id,
+    ]);
+}
+```
+
+## Laravel Testing Patterns
+
+### Feature Testing
+- Test complete user workflows
+- Use database transactions for test isolation
+- Mock external services
+- Test authentication and authorization
+
+```php
+// Good: Feature test example
+class CourseEnrollmentTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_student_can_enroll_in_published_course()
+    {
+        $student = User::factory()->student()->create();
+        $course = Course::factory()->published()->create();
+        
+        $this->actingAs($student)
+             ->post("/courses/{$course->id}/enroll")
+             ->assertRedirect()
+             ->assertSessionHas('success');
+             
+        $this->assertDatabaseHas('course_enrollments', [
+            'user_id' => $student->id,
+            'course_id' => $course->id,
+        ]);
+    }
+
+    public function test_student_cannot_enroll_in_draft_course()
+    {
+        $student = User::factory()->student()->create();
+        $course = Course::factory()->draft()->create();
+        
+        $this->actingAs($student)
+             ->post("/courses/{$course->id}/enroll")
+             ->assertStatus(403);
+             
+        $this->assertDatabaseMissing('course_enrollments', [
+            'user_id' => $student->id,
+            'course_id' => $course->id,
+        ]);
+    }
+
+    public function test_instructor_can_create_course()
+    {
+        $instructor = User::factory()->instructor()->create();
+        
+        $courseData = [
+            'title' => 'Test Course',
+            'description' => 'Test Description',
+            'price' => 99.99,
+        ];
+        
+        $this->actingAs($instructor)
+             ->post('/courses', $courseData)
+             ->assertRedirect()
+             ->assertSessionHas('success');
+             
+        $this->assertDatabaseHas('courses', [
+            'title' => 'Test Course',
+            'instructor_id' => $instructor->id,
+        ]);
+    }
+}
+```
+
+### Unit Testing
+- Test individual methods and classes
+- Mock dependencies properly
+- Test edge cases and error conditions
+- Use proper assertions
+
+```php
+// Good: Unit test example
+class CourseServiceTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private CourseService $courseService;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->courseService = app(CourseService::class);
+    }
+
+    public function test_creates_course_with_valid_data()
+    {
+        $data = [
+            'title' => 'Test Course',
+            'description' => 'Test Description',
+            'price' => 99.99,
+            'instructor_id' => User::factory()->instructor()->create()->id,
+        ];
+        
+        $course = $this->courseService->createCourse($data);
+        
+        $this->assertInstanceOf(Course::class, $course);
+        $this->assertEquals('Test Course', $course->title);
+        $this->assertEquals(99.99, $course->price);
+    }
+
+    public function test_throws_exception_for_invalid_data()
+    {
+        $this->expectException(ValidationException::class);
+        
+        $this->courseService->createCourse([]);
+    }
+
+    public function test_calculates_revenue_correctly()
+    {
+        $course = Course::factory()->create(['price' => 100]);
+        $enrollments = CourseEnrollment::factory()->count(5)->create([
+            'course_id' => $course->id,
+            'amount_paid' => 100,
+        ]);
+        
+        $revenue = $this->courseService->calculateRevenue($course);
+        
+        $this->assertEquals(500, $revenue);
+    }
+}
+```
+
+### Model Testing
+- Test model relationships
+- Test model scopes and methods
+- Test model events and observers
+- Test model validation
+
+```php
+// Good: Model test example
+class CourseTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_course_belongs_to_instructor()
+    {
+        $instructor = User::factory()->instructor()->create();
+        $course = Course::factory()->create(['instructor_id' => $instructor->id]);
+        
+        $this->assertInstanceOf(User::class, $course->instructor);
+        $this->assertEquals($instructor->id, $course->instructor->id);
+    }
+
+    public function test_published_scope_returns_only_published_courses()
+    {
+        Course::factory()->create(['status' => 'draft']);
+        Course::factory()->create(['status' => 'published']);
+        
+        $publishedCourses = Course::published()->get();
+        
+        $this->assertCount(1, $publishedCourses);
+        $this->assertEquals('published', $publishedCourses->first()->status);
+    }
+
+    public function test_slug_is_generated_from_title()
+    {
+        $course = Course::factory()->create(['title' => 'Test Course Title']);
+        
+        $this->assertEquals('test-course-title', $course->slug);
+    }
+
+    public function test_course_has_many_sections()
+    {
+        $course = Course::factory()->create();
+        $sections = CourseSection::factory()->count(3)->create(['course_id' => $course->id]);
+        
+        $this->assertCount(3, $course->sections);
+        $this->assertInstanceOf(CourseSection::class, $course->sections->first());
+    }
+}
+```
+
+## React Testing Patterns
+
+### Component Testing
+- Test component rendering
+- Test user interactions
+- Test component props
+- Test component state
+
+```tsx
+// Good: Component test example
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { CourseCard } from '@/components/course-card';
+import { BrowserRouter } from 'react-router-dom';
+
+const renderWithRouter = (component: React.ReactElement) => {
+  return render(<BrowserRouter>{component}</BrowserRouter>);
+};
+
+describe('CourseCard', () => {
+  const mockCourse = {
+    id: '1',
+    title: 'Test Course',
+    description: 'Test Description',
+    price: 99.99,
+    instructor: { name: 'John Doe' },
+  };
+
+  it('should render course information', () => {
+    renderWithRouter(<CourseCard course={mockCourse} />);
+    
+    expect(screen.getByText('Test Course')).toBeInTheDocument();
+    expect(screen.getByText('Test Description')).toBeInTheDocument();
+    expect(screen.getByText('$99.99')).toBeInTheDocument();
+  });
+
+  it('should call onEnroll when enroll button is clicked', async () => {
+    const onEnroll = jest.fn();
+    renderWithRouter(<CourseCard course={mockCourse} onEnroll={onEnroll} />);
+    
+    fireEvent.click(screen.getByText('Enroll'));
+    
+    await waitFor(() => {
+      expect(onEnroll).toHaveBeenCalledWith('1');
+    });
+  });
+
+  it('should display loading state when enrolling', () => {
+    renderWithRouter(<CourseCard course={mockCourse} isEnrolling={true} />);
+    
+    expect(screen.getByText('Enrolling...')).toBeInTheDocument();
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+});
+```
+
+### Hook Testing
+- Test custom hooks in isolation
+- Mock dependencies properly
+- Test hook return values
+- Test hook state changes
+
+```tsx
+// Good: Hook test example
+import { renderHook, act } from '@testing-library/react';
+import { useModal } from '@/hooks/use-modal';
+
+describe('useModal', () => {
+  it('should initialize with closed state', () => {
+    const { result } = renderHook(() => useModal());
+    
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.data).toBe(null);
+  });
+
+  it('should open modal with data', () => {
+    const { result } = renderHook(() => useModal());
+    
+    act(() => {
+      result.current.open({ id: '1', name: 'Test' });
+    });
+    
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.data).toEqual({ id: '1', name: 'Test' });
+  });
+
+  it('should close modal', () => {
+    const { result } = renderHook(() => useModal(true));
+    
+    act(() => {
+      result.current.close();
+    });
+    
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.data).toBe(null);
+  });
+});
+```
+
+### Integration Testing
+- Test component interactions
+- Test API integration
+- Test form submissions
+- Test navigation
+
+```tsx
+// Good: Integration test example
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { CourseForm } from '@/components/course-form';
+import { rest } from 'msw';
+import { setupServer } from 'msw/node';
+
+const server = setupServer(
+  rest.post('/api/courses', (req, res, ctx) => {
+    return res(ctx.json({ id: '1', title: 'Test Course' }));
+  })
+);
+
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+describe('CourseForm Integration', () => {
+  it('should submit form and redirect on success', async () => {
+    render(<CourseForm />);
+    
+    fireEvent.change(screen.getByLabelText('Title'), {
+      target: { value: 'Test Course' }
+    });
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Test Description' }
+    });
+    
+    fireEvent.click(screen.getByRole('button', { name: 'Create Course' }));
+    
+    await waitFor(() => {
+      expect(screen.getByText('Course created successfully')).toBeInTheDocument();
+    });
+  });
+});
+```
+
+## Test Data Management
+
+### Factory Patterns
+- Create realistic test data
+- Use factories for consistent data
+- Implement data relationships
+- Handle data cleanup
+
+```php
+// Good: Factory implementation
+class CourseFactory extends Factory
+{
+    protected $model = Course::class;
+
+    public function definition()
+    {
+        return [
+            'title' => $this->faker->sentence(4),
+            'description' => $this->faker->paragraphs(3, true),
+            'price' => $this->faker->randomFloat(2, 0, 500),
+            'status' => $this->faker->randomElement(['draft', 'published']),
+            'instructor_id' => User::factory()->instructor(),
+            'category_id' => Category::factory(),
+        ];
+    }
+
+    public function published()
+    {
+        return $this->state(function (array $attributes) {
+            return [
+                'status' => 'published',
+                'published_at' => $this->faker->dateTimeBetween('-1 year', 'now'),
+            ];
+        });
+    }
+
+    public function withSections($count = 3)
+    {
+        return $this->afterCreating(function (Course $course) use ($count) {
+            CourseSection::factory()->count($count)->create([
+                'course_id' => $course->id
+            ]);
+        });
+    }
+}
+```
+
+### Test Database
+- Use separate test database
+- Implement proper database seeding
+- Use database transactions for isolation
+- Handle database cleanup
+
+```php
+// Good: Test database setup
+class TestCase extends BaseTestCase
+{
+    use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        // Seed test data
+        $this->seed([
+            CategorySeeder::class,
+            UserSeeder::class,
+        ]);
+    }
+
+    protected function tearDown(): void
+    {
+        // Clean up test data
+        $this->artisan('migrate:rollback');
+        parent::tearDown();
+    }
+}
+```
+
+## Mocking and Stubbing
+
+### Service Mocking
+- Mock external services
+- Mock expensive operations
+- Use proper mock assertions
+- Handle mock cleanup
+
+```php
+// Good: Service mocking
+class PaymentServiceTest extends TestCase
+{
+    public function test_processes_payment_successfully()
+    {
+        $mockPaymentGateway = $this->createMock(PaymentGatewayInterface::class);
+        $mockPaymentGateway->expects($this->once())
+            ->method('processPayment')
+            ->willReturn(new PaymentResult(['status' => 'success']));
+        
+        $paymentService = new PaymentService($mockPaymentGateway);
+        $result = $paymentService->processPayment(['amount' => 100]);
+        
+        $this->assertTrue($result->isSuccessful());
+    }
+}
+```
+
+### API Mocking
+- Mock external API calls
+- Use consistent mock data
+- Handle different response scenarios
+- Test error conditions
+
+```tsx
+// Good: API mocking
+import { rest } from 'msw';
+import { setupServer } from 'msw/node';
+
+const server = setupServer(
+  rest.get('/api/courses', (req, res, ctx) => {
+    return res(ctx.json({
+      data: [
+        { id: '1', title: 'Test Course 1' },
+        { id: '2', title: 'Test Course 2' },
+      ]
+    }));
+  }),
+  
+  rest.post('/api/courses', (req, res, ctx) => {
+    return res(ctx.json({ id: '3', title: 'New Course' }));
+  }),
+  
+  rest.get('/api/courses/:id', (req, res, ctx) => {
+    return res(ctx.json({ id: req.params.id, title: 'Test Course' }));
+  })
+);
+```
+
+## Performance Testing
+
+### Load Testing
+- Test application under load
+- Monitor performance metrics
+- Identify bottlenecks
+- Test scalability
+
+```php
+// Good: Load test example
+class CourseLoadTest extends TestCase
+{
+    public function test_course_list_performance()
+    {
+        Course::factory()->count(1000)->create();
+        
+        $startTime = microtime(true);
+        
+        $response = $this->get('/api/courses');
+        
+        $endTime = microtime(true);
+        $executionTime = $endTime - $startTime;
+        
+        $response->assertStatus(200);
+        $this->assertLessThan(1.0, $executionTime, 'Course list should load in under 1 second');
+    }
+}
+```
+
+### Memory Testing
+- Monitor memory usage
+- Test for memory leaks
+- Optimize memory consumption
+- Use proper cleanup
+
+```php
+// Good: Memory test example
+class MemoryTest extends TestCase
+{
+    public function test_course_creation_memory_usage()
+    {
+        $initialMemory = memory_get_usage();
+        
+        for ($i = 0; $i < 100; $i++) {
+            Course::factory()->create();
+        }
+        
+        $finalMemory = memory_get_usage();
+        $memoryUsed = $finalMemory - $initialMemory;
+        
+        $this->assertLessThan(50 * 1024 * 1024, $memoryUsed, 'Memory usage should be under 50MB');
+    }
+}
+```
+
+## Quality Assurance
+
+### Code Coverage
+- Maintain high test coverage
+- Test critical business logic
+- Cover edge cases
+- Monitor coverage metrics
+
+```bash
+# Good: Coverage commands
+# Run tests with coverage
+php artisan test --coverage
+
+# Generate coverage report
+php artisan test --coverage-html coverage/
+
+# Check coverage threshold
+php artisan test --coverage --min=80
+```
+
+### Static Analysis
+- Use PHPStan for static analysis
+- Implement code quality checks
+- Use ESLint for JavaScript
+- Monitor code quality metrics
+
+```json
+// Good: PHPStan configuration
+{
+  "parameters": {
+    "level": 8,
+    "paths": ["app/"],
+    "ignoreErrors": [
+      {
+        "message": "Call to an undefined method",
+        "path": "app/Services/",
+        "count": 1
+      }
+    ]
+  }
+}
+```
+
+### Continuous Integration
+- Run tests on every commit
+- Use automated testing pipelines
+- Implement quality gates
+- Monitor test results
+
+```yaml
+# Good: CI configuration
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+        
+    - name: Install dependencies
+      run: composer install
+      
+    - name: Run tests
+      run: php artisan test --coverage
+      
+    - name: Run static analysis
+      run: ./vendor/bin/phpstan analyse
+```
+
+## Test Documentation
+
+### Test Documentation
+- Document test purposes
+- Explain test scenarios
+- Provide test data examples
+- Maintain test documentation
+
+```php
+// Good: Test documentation
+/**
+ * Test course enrollment functionality
+ * 
+ * This test verifies that:
+ * - Students can enroll in published courses
+ * - Students cannot enroll in draft courses
+ * - Enrollment creates proper database records
+ * - Enrollment triggers appropriate notifications
+ */
+public function test_student_can_enroll_in_published_course()
+{
+    // Test implementation
+}
+```
+
+### Test Maintenance
+- Keep tests up to date
+- Refactor tests when needed
+- Remove obsolete tests
+- Monitor test performance
+
+```php
+// Good: Test maintenance
+class CourseTest extends TestCase
+{
+    /**
+     * @deprecated Use CourseEnrollmentTest::test_student_can_enroll instead
+     */
+    public function test_old_enrollment_method()
+    {
+        $this->markTestSkipped('This test is deprecated. Use CourseEnrollmentTest instead.');
+    }
+}
+```
