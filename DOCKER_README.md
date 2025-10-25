@@ -15,12 +15,7 @@ docker build -t mentor-lms .
 docker network create mentor-network
 
 # Run MySQL container
-docker run -d --name mysql --network mentor-network \
-  -e MYSQL_ROOT_PASSWORD=rootpassword \
-  -e MYSQL_DATABASE=mentor_lms \
-  -e MYSQL_USER=mentor_user \
-  -e MYSQL_PASSWORD=your_password \
-  -p 3306:3306 mysql:8.0
+docker run -d --name mysql --network mentor-network -e MYSQL_ROOT_PASSWORD=rootpassword -e MYSQL_DATABASE=mentor_lms -e MYSQL_USER=mentor_user -e MYSQL_PASSWORD=your_password -p 3307:3306 mysql:8.0
 
 # Run application
 docker run -d --name mentor-lms-app --network mentor-network -p 8080:80 mentor-lms

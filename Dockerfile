@@ -108,8 +108,8 @@ ENV COMPOSER_ALLOW_SUPERUSER=1
 ENV COMPOSER_NO_INTERACTION=1
 ENV COMPOSER_MEMORY_LIMIT=2G
 
-# Update composer.lock to match PHP version and install dependencies
-RUN composer update --lock --no-dev --optimize-autoloader --no-interaction --verbose
+# Install dependencies from composer.lock
+RUN composer install --no-dev --optimize-autoloader --no-interaction --verbose
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html \
